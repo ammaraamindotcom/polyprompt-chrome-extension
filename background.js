@@ -66,9 +66,15 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
 async function callOpenAI(apiKey, dataUrl) {
   const systemPrompt = buildSystemPrompt();
   const userPrompt =
-    "Step 1: Decide if the screenshot contains a real event announcement or invitation. " +
-    "Step 2 (only if Step 1 is true): Extract event fields. " +
-    "If no event is recognized, return JSON with is_event=false and event=null.";
+  const userPrompt =
+  "Analyze this screenshot carefully.\n\n" +
+  "Step 1: Decide if it contains a real, upcoming event announcement.\n" +
+  "Step 2: If true, extract structured event details.\n\n" +
+  "Important:\n" +
+  "- Do not guess missing details.\n" +
+  "- If uncertain, use null.\n" +
+  "- Only extract what is clearly visible.\n" +
+  "- Output JSON only.";
 
   const body = {
     model: MODEL_NAME,
@@ -113,28 +119,82 @@ async function callOpenAI(apiKey, dataUrl) {
 }
 
 function buildSystemPrompt() {
-  return [
-    "You are an event extraction engine.",
-    "Always decide if an event is present before extracting details.",
-    "Return JSON only. No prose, no markdown.",
-    "Do not hallucinate. If a field is missing or uncertain, return null.",
-    "Use timezone default 'America/Los_Angeles' when missing.",
-    "Return EXACTLY this JSON schema:",
-    "{",
-    "  \"is_event\": boolean,",
-    "  \"event\": {",
-    "    \"title\": string|null,",
-    "    \"start_datetime\": string|null,",
-    "    \"end_datetime\": string|null,",
-    "    \"timezone\": string,",
-    "    \"location\": string|null,",
-    "    \"host\": string|null,",
-    "    \"registration_link\": string|null,",
-    "    \"cost\": string|null",
-    "  }",
-    "}",
-    "If is_event is false, set event to null."
-  ].join("\n");
+  return `
+You are a strict event extraction engine.
+
+Your task:
+Analyze the provided screenshot and determine whether it contains a REAL upcoming event announcement or invitation.
+
+Definition of a REAL event:
+- A specific future gathering, meeting, performance, party, lecture, workshop, sports game, fundraiser, or organized activity.
+- Must include at least a clear title OR a clear date/time.
+
+Do NOT classify as events:
+- Generic advertisements
+- Venue pages without a specific event
+- Meme posts
+- Past events with no upcoming date
+- Giveaways without a scheduled date/time
+- Promotions without a specific date
+
+If the screenshot does NOT contain a real event:
+Return:
+{
+  "is_event": false,
+  "event": null
+}
+
+If the screenshot DOES contain a real event:
+Extract structured event details following these rules:
+
+Strict extraction rules:
+- Do NOT hallucinate.
+- Do NOT guess missing information.
+- If a field is missing or unclear, return null.
+- Only extract information clearly visible in the screenshot.
+- If required scheduling details are too unclear to reasonably identify the event, set is_event to false.
+
+Date and time rules:
+- Return start_datetime and end_datetime in ISO 8601 format.
+- Example: 2026-04-15T19:00:00
+- Do NOT include timezone offsets in the datetime strings.
+- If year is missing, assume the next upcoming occurrence of that date.
+- If time is missing but date exists, return null for the datetime.
+- If end time is not stated, return end_datetime as null.
+
+Timezone rules:
+- If explicitly stated, use it.
+- Otherwise default to "America/Los_Angeles".
+
+Field-specific rules:
+- registration_link: Only include if clearly visible.
+- cost: Return exactly as written (e.g., "$10", "Free", "$5–$15").
+- location: Extract full visible location text if present.
+- host: Extract organizer name only if clearly stated.
+
+Return JSON ONLY.
+No prose.
+No markdown.
+No explanation.
+
+Return EXACTLY this schema:
+
+{
+  "is_event": boolean,
+  "event": {
+    "title": string|null,
+    "start_datetime": string|null,
+    "end_datetime": string|null,
+    "timezone": string,
+    "location": string|null,
+    "host": string|null,
+    "registration_link": string|null,
+    "cost": string|null
+  }
+}
+
+If is_event is false, event must be null.
+`;
 }
 
 function extractOutputText(responseJson) {
